@@ -34,6 +34,49 @@ var forEach = Ember.EnumerableUtils.forEach;
 DS.EmbeddedMixin = Ember.Mixin.create({
 
   /**
+    The property to use when serializing a client id.
+
+    @property clientIdKey
+    @type {String}
+  */
+  clientIdKey: '_clientId',
+
+  /**
+    Map of client ids, these are temporary ids used when saving new embedded records.
+
+    They will be reconciled upon loading embedded records. Once a client id has been
+    reconciled with a record that has since been given a real id, the clientIdMap 
+    entry will be deleted
+
+    @property clientIdMap
+    @type {Object}
+  */
+  clientIdMap: Ember.computed(function () {
+    return {};
+  }),
+
+  /**
+    Needed because the Ember.computed above does not work (??)
+  */
+  init: function () {
+    this._super();
+    this.clientIdMap = {};
+  },
+
+  /**
+    Return a unique client id
+
+    @property createClientId
+    @type {String}
+  */
+  createClientId: function (record) {
+    var guid = Ember.guidFor(record);
+
+    this.clientIdMap[guid] = record;
+    return guid;
+  },
+
+  /**
     Serialize `belongsTo` relationship when it is configured as an embedded object.
 
     This example of an author model belongs to a post model:
@@ -194,9 +237,15 @@ DS.EmbeddedMixin = Ember.Mixin.create({
       key = this.keyForAttribute(attr);
       json[key] = get(record, attr).map(function(relation) {
         var data = relation.serialize(),
-            primaryKey = get(this, 'primaryKey');
+            primaryKey = get(this, 'primaryKey'),
+            clientIdKey = get(this, 'clientIdKey');
 
-        data[primaryKey] = get(relation, primaryKey);
+        var id = get(relation, primaryKey);
+        if (id) {
+          data[primaryKey] = get(relation, primaryKey);
+        } else {
+          data[clientIdKey] = this.createClientId(relation);
+        }
         if (data.id === null) {
           delete data.id;
         }
@@ -368,7 +417,9 @@ function updatePayloadWithEmbedded(store, type, payload, partial) {
 
 // handles embedding for `hasMany` relationship
 function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payload, partial) {
-  var serializer = store.serializerFor(relationship.type.typeKey);
+  var serializer = store.serializerFor(relationship.type.typeKey),
+      clientIdKey = get(serializer, 'clientIdKey'),
+      parentSerializer = store.serializerFor(relationship.parentType.typeKey);
   var primaryKey = get(this, 'primaryKey');
   var attr = relationship.type.typeKey;
   // underscore forces the embedded records to be side loaded.
@@ -385,10 +436,23 @@ function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payl
   payload[embeddedTypeKey] = payload[embeddedTypeKey] || [];
 
   forEach(partial[attribute], function(data) {
-    var embeddedType = store.modelFor(attr);
+    var embeddedType = store.modelFor(attr),
+        clientId, clientRecord;
     updatePayloadWithEmbedded.call(serializer, store, embeddedType, payload, data);
     ids.push(data[primaryKey]);
-    payload[embeddedTypeKey].push(data);
+        
+    clientId = data[clientIdKey];
+    clientRecord = parentSerializer.clientIdMap[clientId];
+
+    // if embedded data contains client id, mimic a createRecord/save
+    if (clientRecord) {
+      clientRecord.adapterWillCommit();
+      store.didSaveRecord(clientRecord, data);
+      delete parentSerializer.clientIdMap[clientId];
+
+    } else {
+      payload[embeddedTypeKey].push(data);
+    }
   });
 
   partial[expandedKey] = ids;
