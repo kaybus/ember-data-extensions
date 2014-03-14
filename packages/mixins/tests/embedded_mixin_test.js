@@ -481,8 +481,7 @@ test("serialize with embedded objects (hasMany relationships, including related 
 
   env.container.register('serializer:superVillain', DS.EmbeddedSerializer.extend({
     attrs: {
-      evilMinions: {embedded: 'always'},
-      secretWeapons: {embedded: 'ids'}
+      evilMinions: {embedded: 'always'}
     }
   }));
   var serializer = env.container.lookup("serializer:superVillain");
