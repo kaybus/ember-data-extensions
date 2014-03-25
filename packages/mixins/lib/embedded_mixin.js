@@ -437,7 +437,7 @@ function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payl
   forEach(partial[attribute], function(data) {
     var embeddedType = store.modelFor(attr),
         clientId, clientRecord;
-    updatePayloadWithEmbedded.call(serializer, store, embeddedType, payload, data);
+
     ids.push(data[primaryKey]);
         
     clientId = data[clientIdKey];
@@ -445,11 +445,18 @@ function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payl
 
     // if embedded data contains client id, mimic a createRecord/save
     if (clientRecord) {
+      var json = {};
+      json[relationship.type.typeKey] = data;
+
+      // normalize and extract embedded records
+      data = serializer.extract(store, relationship.type, json, get(clientRecord, primaryKey), 'find');
+      
       clientRecord.adapterWillCommit();
       store.didSaveRecord(clientRecord, data);
       delete parentSerializer.clientIdMap[clientId];
 
     } else {
+      updatePayloadWithEmbedded.call(serializer, store, embeddedType, payload, data);
       payload[embeddedTypeKey].push(data);
     }
   });
