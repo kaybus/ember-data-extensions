@@ -195,7 +195,7 @@ test("extractPolymorphic", function() {
   YellowMinion.toString = function() { return "YellowMinion"; };
 
   var json_hash = {
-    doomsday_device: {id: 1, name: "DeathRay", evil_minion: { type: "yellow_minion", id: 12}},
+    doomsday_device: {id: 1, name: "DeathRay", evil_minion_id: 12, evil_minion_type: "yellow_minion" },
     evil_minions:    [{id: 12, name: "Alex", doomsday_device_ids: [1] }]
   };
 
