@@ -243,7 +243,8 @@ DS.EmbeddedMixin = Ember.Mixin.create({
         if (id) {
           data[primaryKey] = get(relation, primaryKey);
         } else {
-          data[clientIdKey] = this.createClientId(relation);
+          var typeSerializer = this.store.serializerFor(relationship.type.typeKey);
+          data[clientIdKey] = typeSerializer.createClientId(relation);
         }
         if (data.id === null) {
           delete data.id;
@@ -417,8 +418,7 @@ function updatePayloadWithEmbedded(store, type, payload, partial) {
 // handles embedding for `hasMany` relationship
 function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payload, partial) {
   var serializer = store.serializerFor(relationship.type.typeKey),
-      clientIdKey = get(serializer, 'clientIdKey'),
-      parentSerializer = store.serializerFor(relationship.parentType.typeKey);
+      clientIdKey = get(serializer, 'clientIdKey');
   var primaryKey = get(this, 'primaryKey');
   var attr = relationship.type.typeKey;
   // underscore forces the embedded records to be side loaded.
@@ -437,25 +437,30 @@ function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payl
   forEach(partial[attribute], function(data) {
     var embeddedType = store.modelFor(attr),
         clientId, clientRecord;
-
-    ids.push(data[primaryKey]);
         
     clientId = data[clientIdKey];
-    clientRecord = parentSerializer.clientIdMap[clientId];
+    clientRecord = serializer.clientIdMap[clientId];
 
     // if embedded data contains client id, mimic a createRecord/save
     if (clientRecord) {
-      var json = {};
-      json[relationship.type.typeKey] = data;
-
-      // normalize and extract embedded records
-      data = serializer.extract(store, relationship.type, json, get(clientRecord, primaryKey), 'find');
+      delete serializer.clientIdMap[clientId];
+      store.updateId(clientRecord, data);
       
       clientRecord.adapterWillCommit();
-      store.didSaveRecord(clientRecord, data);
-      delete parentSerializer.clientIdMap[clientId];
+
+      // normalize and extract embedded record, must be done after the 
+      // primary record has resolved with an id
+      Ember.run.schedule('actions', function () {
+        var json = {};
+        json[relationship.type.typeKey] = data;
+
+        data = serializer.extractSave(store, relationship.type, json);
+        store.didSaveRecord(clientRecord, data);
+      });
 
     } else {
+      ids.push(data[primaryKey]); // yuck..
+      
       updatePayloadWithEmbedded.call(serializer, store, embeddedType, payload, data);
       payload[embeddedTypeKey].push(data);
     }
