@@ -437,6 +437,8 @@ function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payl
   forEach(partial[attribute], function(data) {
     var embeddedType = store.modelFor(attr),
         clientId, clientRecord;
+
+    ids.push(data[primaryKey]);
         
     clientId = data[clientIdKey];
     clientRecord = serializer.clientIdMap[clientId];
@@ -446,10 +448,13 @@ function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payl
       delete serializer.clientIdMap[clientId];
       store.updateId(clientRecord, data);
       
-      clientRecord.adapterWillCommit();
+      // hack: record needs to be isNew == false or hasMany relationships will contain duplicates.
+      clientRecord.send('willCommit'); // isNew = true
+      clientRecord.send('didCommit'); // isNew = false, isSaving = false
+      clientRecord.send('willCommit'); // isSaving = true, isNew = false
 
-      // normalize and extract embedded record, must be done after the 
-      // primary record has resolved with an id
+      // normalize and extract embedded record, must be done async so that the 
+      // primary record has resolved with an id before the payload is loaded.
       Ember.run.schedule('actions', function () {
         var json = {};
         json[relationship.type.typeKey] = data;
@@ -459,8 +464,6 @@ function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payl
       });
 
     } else {
-      ids.push(data[primaryKey]); // yuck..
-      
       updatePayloadWithEmbedded.call(serializer, store, embeddedType, payload, data);
       payload[embeddedTypeKey].push(data);
     }
