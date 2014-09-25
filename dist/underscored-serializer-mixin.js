@@ -171,7 +171,8 @@ DS.UnderscoredSerializer = Ember.Mixin.create({
     ```js
       {
         id: "1"
-        minion: { type: "evil_minion", id: "12"}
+        minion_id: "12",
+        minion_type: "EvilMinion"
       }
     ```
 
@@ -179,7 +180,7 @@ DS.UnderscoredSerializer = Ember.Mixin.create({
     ```js
       {
         id: "1"
-        minion: { type: "evilMinion", id: "12"}
+        minion: { type: "evilMinion", id: "12" }
       }
     ```
 
@@ -194,8 +195,15 @@ DS.UnderscoredSerializer = Ember.Mixin.create({
         if (relationship.options.polymorphic) {
           payloadKey = this.keyForAttribute(key);
           payload = hash[payloadKey];
-          if (payload && payload.type) {
-            payload.type = this.typeForRoot(payload.type);
+          if (relationship.kind === "belongsTo") {
+            var typeKey = payloadKey + '_type';
+            payloadKey = payloadKey + '_id';
+            payload = hash[payloadKey];
+            var type = hash[typeKey];
+            if (type) {
+              payload = { id: payload, type: this.typeForRoot(type) };
+              delete hash[typeKey];
+            }
           } else if (payload && relationship.kind === "hasMany") {
             var self = this;
             forEach(payload, function(single) {

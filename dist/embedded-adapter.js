@@ -257,7 +257,8 @@ DS.UnderscoredSerializer = Ember.Mixin.create({
     ```js
       {
         id: "1"
-        minion: { type: "evil_minion", id: "12"}
+        minion_id: "12",
+        minion_type: "EvilMinion"
       }
     ```
 
@@ -265,7 +266,7 @@ DS.UnderscoredSerializer = Ember.Mixin.create({
     ```js
       {
         id: "1"
-        minion: { type: "evilMinion", id: "12"}
+        minion: { type: "evilMinion", id: "12" }
       }
     ```
 
@@ -280,8 +281,15 @@ DS.UnderscoredSerializer = Ember.Mixin.create({
         if (relationship.options.polymorphic) {
           payloadKey = this.keyForAttribute(key);
           payload = hash[payloadKey];
-          if (payload && payload.type) {
-            payload.type = this.typeForRoot(payload.type);
+          if (relationship.kind === "belongsTo") {
+            var typeKey = payloadKey + '_type';
+            payloadKey = payloadKey + '_id';
+            payload = hash[payloadKey];
+            var type = hash[typeKey];
+            if (type) {
+              payload = { id: payload, type: this.typeForRoot(type) };
+              delete hash[typeKey];
+            }
           } else if (payload && relationship.kind === "hasMany") {
             var self = this;
             forEach(payload, function(single) {
@@ -530,7 +538,8 @@ DS.EmbeddedMixin = Ember.Mixin.create({
       if (id) {
         data[primaryKey] = get(relation, primaryKey);
       } else {
-        data[clientIdKey] = this.createClientId(relation);
+        var typeSerializer = this.store.serializerFor(relationship.type.typeKey);
+        data[clientIdKey] = typeSerializer.createClientId(relation);
       }
       if (data.id === null) {
         delete data.id;
@@ -698,8 +707,7 @@ function updatePayloadWithEmbedded(store, type, payload, partial) {
 // handles embedding for `hasMany` relationship
 function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payload, partial) {
   var serializer = store.serializerFor(relationship.type.typeKey),
-      clientIdKey = get(serializer, 'clientIdKey'),
-      parentSerializer = store.serializerFor(relationship.parentType.typeKey);
+      clientIdKey = get(serializer, 'clientIdKey');
   var primaryKey = get(this, 'primaryKey');
   var attr = relationship.type.typeKey;
   // underscore forces the embedded records to be side loaded.
@@ -718,19 +726,34 @@ function updatePayloadWithEmbeddedHasMany(store, primaryType, relationship, payl
   forEach(partial[attribute], function(data) {
     var embeddedType = store.modelFor(attr),
         clientId, clientRecord;
-    updatePayloadWithEmbedded.call(serializer, store, embeddedType, payload, data);
+
     ids.push(data[primaryKey]);
         
     clientId = data[clientIdKey];
-    clientRecord = parentSerializer.clientIdMap[clientId];
+    clientRecord = serializer.clientIdMap[clientId];
 
     // if embedded data contains client id, mimic a createRecord/save
     if (clientRecord) {
-      clientRecord.adapterWillCommit();
-      store.didSaveRecord(clientRecord, data);
-      delete parentSerializer.clientIdMap[clientId];
+      delete serializer.clientIdMap[clientId];
+      store.updateId(clientRecord, data);
+      
+      // hack: record needs to be isNew == false or hasMany relationships will contain duplicates.
+      clientRecord.send('willCommit'); // isNew = true
+      clientRecord.send('didCommit'); // isNew = false, isSaving = false
+      clientRecord.send('willCommit'); // isSaving = true, isNew = false
+
+      // normalize and extract embedded record, must be done async so that the 
+      // primary record has resolved with an id before the payload is loaded.
+      Ember.run.schedule('actions', function () {
+        var json = {};
+        json[relationship.type.typeKey] = data;
+
+        data = serializer.extractSave(store, relationship.type, json);
+        store.didSaveRecord(clientRecord, data);
+      });
 
     } else {
+      updatePayloadWithEmbedded.call(serializer, store, embeddedType, payload, data);
       payload[embeddedTypeKey].push(data);
     }
   });
@@ -795,9 +818,9 @@ DS.EmbeddedInModelMixin = Ember.Mixin.create({
   embeddedDirtyTracker: (function(obj, path) {
     if (this.get('isDirty')) {
       var _this = this;
-      this.eachRelationship(function (relation) {
-        if (typeof this.then === 'function') { return; }
-        var record = _this.get(relation);
+      this.eachRelationship(function (key, relationship) {
+        if (typeof this.then === 'function' || relationship.kind === 'hasMany') { return; }
+        var record = _this.get(key);
         if (record && (!record.get('isLoading') && !record.get('isDirty'))) {
           dirtyTransition.call(record);
         }
